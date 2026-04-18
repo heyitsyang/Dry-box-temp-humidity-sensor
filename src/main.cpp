@@ -25,6 +25,7 @@
 #include <SensirionI2cSht4x.h>
 #include <PubSubClient.h>
 #include <ezTime.h>
+#include <Preferences.h>
 
 // local definitions
 #include "prototypes.h"
@@ -37,9 +38,9 @@
 
 // TIME SETTINGS
 #define MY_TIMEZONE "America/New_York"               // <<<<<<< use Olson format: https://en.wikipedia.org/wiki/List_of_tz_database_time_zones
-#define TIMEZONE_EEPROM_OFFSET 0                     // location-to-timezone info - saved in case eztime server is down
+#define MY_TIMEZONE_POSIX_FALLBACK "EST5EDT,M3.2.0,M11.1.0"  // hardcoded fallback if timezoned server unreachable
 
-#define VERSION "Ver 0.2 build 2025.05.1"
+#define VERSION "Ver 0.2 build 2026.04.18"
 
 // GPIO PIN DEFINITIONS
 #define BATT_ADC_PIN 2
@@ -82,6 +83,7 @@
 WiFiClient espClient;
 PubSubClient mqttClient(espClient);
 Timezone myTZ;
+Preferences tzPrefs;
 
 esp_sleep_wakeup_cause_t wakeup_reason;
 
@@ -136,7 +138,19 @@ void setup()
   waitForSync();  //sync the time
   setInterval(0);  //do not periodically sync NTP
   setup_OTA();
-  myTZ.setLocation(F(MY_TIMEZONE)); 
+  myTZ.setLocation(F(MY_TIMEZONE));
+  if (myTZ.getPosix() != "") {
+    tzPrefs.begin("tz", false);
+    tzPrefs.putString("posix", myTZ.getPosix());
+    tzPrefs.end();
+    Serial.printf("Timezone POSIX saved: %s\n", myTZ.getPosix().c_str());
+  } else {
+    tzPrefs.begin("tz", true);
+    String savedPosix = tzPrefs.getString("posix", MY_TIMEZONE_POSIX_FALLBACK);
+    tzPrefs.end();
+    myTZ.setPosix(savedPosix);
+    Serial.printf("Timezone lookup failed, using: %s\n", savedPosix.c_str());
+  }
   Serial.printf("Got local time: %s\n", myTZ.dateTime("[H:i:s.v]").c_str());
 
   wakeup_reason = esp_sleep_get_wakeup_cause();
@@ -193,8 +207,9 @@ void sendMQTT()
   mqttClient.publish(DRY_BOX_WIFI_STRENGTH_TOPIC, mqttMsg, true);
   Serial.printf("%s MQTT SENT: %s/%s\n", myTZ.dateTime("[H:i:s.v]").c_str(), DRY_BOX_WIFI_STRENGTH_TOPIC , "true");
 
-  mqttClient.publish(DRY_BOX_REPORT_TIME_STAMP_TOPIC, myTZ.dateTime(RFC3339).c_str(), true);
-  Serial.printf("%s MQTT SENT: %s/%s \n", myTZ.dateTime("[H:i:s.v]").c_str(), DRY_BOX_REPORT_TIME_STAMP_TOPIC, myTZ.dateTime(RFC3339).c_str());
+// Below is not needed. HA provides its own that is properly DST adjusted
+  // mqttClient.publish(DRY_BOX_REPORT_TIME_STAMP_TOPIC, myTZ.dateTime(RFC3339).c_str(), true);
+  // Serial.printf("%s MQTT SENT: %s/%s \n", myTZ.dateTime("[H:i:s.v]").c_str(), DRY_BOX_REPORT_TIME_STAMP_TOPIC, myTZ.dateTime(RFC3339).c_str());
 
   sendBatteryStatus();
   sendTempHumStatus();
